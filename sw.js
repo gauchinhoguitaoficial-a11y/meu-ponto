@@ -1,5 +1,5 @@
 // Funciona offline: guarda os arquivos do app e busca a versão nova quando tiver internet.
-const CACHE = "meu-ponto-v1";
+const CACHE = "meu-ponto-v2";
 const FILES = ["./", "index.html", "manifest.json", "icon-180.png", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", e => {

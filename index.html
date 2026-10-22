@@ -68,6 +68,12 @@ h1{font-size:22px;margin:0}
 .btn{flex:1;border:none;border-radius:14px;padding:16px 12px;font:700 17px var(--f-body);cursor:pointer;text-align:center}
 .btn.primary{background:var(--accent);color:var(--accent-ink)}
 .btn.ghost{background:var(--card);color:var(--ink);border:1px solid var(--line)}
+.bar .in{gap:10px}
+.preview{max-height:150px;object-fit:contain;border-radius:10px;background:var(--paper);width:100%}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:r .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes r{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+.sep{border:0;border-top:1px dashed var(--line);margin:4px 0}
 button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .sheet{position:fixed;inset:0;background:rgb(0 0 0 / .45);display:flex;align-items:flex-end;justify-content:center;z-index:20}
 .box{background:var(--card);width:100%;max-width:560px;border-radius:18px 18px 0 0;
@@ -128,10 +134,11 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
   <p class="note">Dias úteis sem batida aparecem apagados e não entram no saldo (folga, atestado, feriado). Toque num dia para corrigir. Tolerância da CLT: até 5 min por batida e 10 min por dia.</p>
 </div>
 
-<div class="bar"><div class="in"><button class="btn primary" id="btnBati" type="button">Bati o ponto</button></div></div>
+<div class="bar"><div class="in"><button class="btn primary" id="btnFoto" type="button">Foto do ticket</button><button class="btn ghost" id="btnBati" type="button">Bati o ponto</button></div></div>
 <div class="sheet" id="sheet" hidden><div class="box" id="box" role="dialog" aria-modal="true"></div></div>
 <div class="toast" id="toast" hidden></div>
 <input type="file" id="fileImp" accept="application/json,.json" hidden>
+<input type="file" id="fileFoto" accept="image/*" capture="environment" hidden>
 
 <script>
 const KEY="meuPonto.v1";
@@ -233,10 +240,13 @@ function openSheet(html){$("box").innerHTML=html;$("sheet").hidden=false}
 function closeSheet(){$("sheet").hidden=true;$("box").innerHTML=""}
 $("sheet").addEventListener("click",e=>{if(e.target.id==="sheet")closeSheet()});
 
-function batiSheet(dateIso,timeStr){
+function batiSheet(dateIso,timeStr,extra){
+  extra=extra||{};
   const now=new Date();
   dateIso=dateIso||iso(now); timeStr=timeStr||pad(now.getHours())+":"+pad(now.getMinutes());
   openSheet(`<h2>Confira com o ticket</h2>
+    ${extra.img?`<img class="preview" src="${extra.img}" alt="Foto do ticket">`:""}
+    ${extra.aviso?`<div class="msg${extra.erro?" err":""}">${extra.aviso}</div>`:""}
     <div class="clock">
       <button type="button" id="mMenos" aria-label="Menos 1 minuto">−</button>
       <input id="fHora" type="time" value="${timeStr}" aria-label="Hora da batida">
@@ -244,7 +254,7 @@ function batiSheet(dateIso,timeStr){
     </div>
     <div class="row2">
       <div class="field"><label for="fData">Data</label><input id="fData" type="date" value="${dateIso}"></div>
-      <div class="field"><label for="fNsr">NSR (opcional)</label><input id="fNsr" inputmode="numeric" placeholder="—"></div>
+      <div class="field"><label for="fNsr">NSR (opcional)</label><input id="fNsr" inputmode="numeric" placeholder="—" value="${extra.nsr||""}"></div>
     </div>
     <div class="msg err" id="fErr" hidden></div>
     <div class="btns"><button class="btn ghost" type="button" id="fCancel">Cancelar</button><button class="btn primary" type="button" id="fSave">Salvar</button></div>`);
@@ -285,13 +295,83 @@ function cfgSheet(){
       <div class="field"><label for="cL">Extra antes da hora 55 (min)</label><input id="cL" type="number" inputmode="numeric" min="0" value="${c.limiteExtra}"></div>
     </div>
     <label class="check"><input type="checkbox" id="cSab" ${c.sabado?"checked":""}> Sábado é dia útil (mesmo horário)</label>
+    <hr class="sep">
+    <div class="field"><label for="cKey">Chave da API do Claude (para ler a foto)</label><input id="cKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${getKey()?"chave salva ••••"+getKey().slice(-4):"sk-ant-..."}"></div>
+    <p class="note">A chave fica guardada só neste iPhone e não vai no backup. Deixe em branco para manter a atual.</p>
+    <div class="btns"><button class="btn ghost" type="button" id="cTest">Testar chave</button>${getKey()?'<button class="btn ghost" type="button" id="cDelKey">Remover chave</button>':""}</div>
+    <div class="msg" id="cMsg" hidden></div>
     <div class="btns"><button class="btn ghost" type="button" id="cCancel">Cancelar</button><button class="btn primary" type="button" id="cSave">Salvar</button></div>`);
   $("cCancel").onclick=closeSheet;
+  const keyMsg=(t,err)=>{const m=$("cMsg");m.textContent=t;m.className="msg"+(err?" err":"");m.hidden=false};
+  $("cTest").onclick=async()=>{
+    const k=$("cKey").value.trim()||getKey(); if(!k)return keyMsg("Cole a chave primeiro.",true);
+    keyMsg("Testando…");
+    try{await chamarClaude(k,[{type:"text",text:"Responda só: ok"}],10);keyMsg("Chave funcionando.")}
+    catch(e){keyMsg(e.message,true)}
+  };
+  if($("cDelKey"))$("cDelKey").onclick=()=>{setKey("");closeSheet();toast("Chave removida")};
   $("cSave").onclick=()=>{
     state.cfg={entrada:$("cE").value||"08:00",saida:$("cS").value||"17:00",almoco:+$("cA").value||0,limiteExtra:+$("cL").value||0,sabado:$("cSab").checked};
-    if(save()){closeSheet();render();toast("Jornada salva")}
+    const nk=$("cKey").value.trim(); if(nk)setKey(nk);
+    if(save()){closeSheet();render();toast("Salvo")}
   };
 }
+
+/* ---------- leitura da foto pelo Claude ---------- */
+const KEYK="meuPonto.chave";
+function getKey(){try{return localStorage.getItem(KEYK)||""}catch(e){return ""}}
+function setKey(k){try{k?localStorage.setItem(KEYK,k):localStorage.removeItem(KEYK)}catch(e){}}
+async function chamarClaude(key,content,maxTokens){
+  let r;
+  try{
+    r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{
+      "x-api-key":key,"anthropic-version":"2023-06-01","content-type":"application/json",
+      "anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({model:"claude-haiku-5-5",max_tokens:maxTokens||120,messages:[{role:"user",content}]})});
+  }catch(e){throw new Error("Sem internet agora. Lance a hora conferindo o ticket.")}
+  const txt=await r.text(); let j={}; try{j=JSON.parse(txt)}catch(e){}
+  if(!r.ok){
+    const m=(j.error&&j.error.message)||"";
+    if(r.status===401)throw new Error("A chave está errada ou foi apagada no console. Confira em Jornada.");
+    if(/credit/i.test(m))throw new Error("Acabaram os créditos da API. Recarregue no console da Anthropic.");
+    if(r.status===429||r.status===529)throw new Error("O Claude está ocupado agora. Tente de novo em instantes.");
+    throw new Error("O Claude não aceitou a foto ("+r.status+").");
+  }
+  return (j.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+}
+function reduzir(file){
+  return new Promise((res,rej)=>{
+    const img=new Image(), url=URL.createObjectURL(file);
+    img.onload=()=>{
+      const sc=Math.min(1,1600/Math.max(img.width,img.height)), c=document.createElement("canvas");
+      c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
+      c.getContext("2d").drawImage(img,0,0,c.width,c.height); URL.revokeObjectURL(url);
+      res({b64:c.toDataURL("image/jpeg",.85).split(",")[1],thumb:c.toDataURL("image/jpeg",.5)});
+    };
+    img.onerror=()=>{URL.revokeObjectURL(url);rej()};
+    img.src=url;
+  });
+}
+async function lerFoto(file){
+  openSheet('<h2>Lendo o ticket</h2><div class="msg"><span class="spin"></span>Procurando data, hora e NSR…</div>');
+  let im; try{im=await reduzir(file)}catch(e){return batiSheet(null,null,{aviso:"Não consegui abrir a foto. Confira a hora no ticket.",erro:true})}
+  try{
+    const out=await chamarClaude(getKey(),[
+      {type:"image",source:{type:"base64",media_type:"image/jpeg",data:im.b64}},
+      {type:"text",text:'Foto de um comprovante de registro de ponto (relógio Topdata Inner REP Plus), possivelmente girada. Ele traz a data (DD/MM/AAAA), a hora (HH:MM) e o NSR da marcação. Responda SOMENTE com JSON: {"data":"DD/MM/AAAA","hora":"HH:MM","nsr":"só dígitos"}. Use null no que não estiver legível. Não invente.'}]);
+    const m=out.match(/\{[\s\S]*\}/); const j=m?JSON.parse(m[0]):{};
+    let d=null,t=null,n="";
+    if(j.data&&/^\d{2}\/\d{2}\/\d{4}$/.test(j.data)){const [dd,mm,yy]=j.data.split("/");d=`${yy}-${mm}-${dd}`}
+    if(j.hora&&/^\d{2}:\d{2}$/.test(j.hora))t=j.hora;
+    if(j.nsr)n=String(j.nsr).replace(/\D/g,"").replace(/^0+/,"");
+    batiSheet(d,t,{nsr:n,img:im.thumb,aviso:(d&&t)?"Lido do ticket. Confira e salve.":"Não consegui ler tudo. Complete o que faltar.",erro:!(d&&t)});
+  }catch(e){batiSheet(null,null,{img:im.thumb,aviso:e.message,erro:true})}
+}
+$("btnFoto").onclick=()=>{
+  if(!getKey()){cfgSheet();setTimeout(()=>{const m=$("cMsg");if(m){m.textContent="Para ler a foto, cole aqui a chave da API do Claude.";m.className="msg";m.hidden=false}},0);return}
+  $("fileFoto").value="";$("fileFoto").click();
+};
+$("fileFoto").addEventListener("change",e=>{const f=e.target.files[0];if(f)lerFoto(f)});
 function bkpSheet(){
   openSheet(`<h2>Backup</h2>
     <p class="note">Suas batidas ficam guardadas só neste iPhone. Exporte de vez em quando (por exemplo, todo dia 20) e guarde no Arquivos ou no iCloud.</p>
