@@ -87,7 +87,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 .clock button{flex:0 0 auto}
 .field{display:flex;flex-direction:column;gap:4px}
 .field label{font-size:13px;color:var(--muted)}
-.field input{font:500 17px var(--f-mono);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--paper);color:var(--ink);width:100%;min-height:46px;-webkit-appearance:none;appearance:none}
+.field input,.field select{font:500 17px var(--f-mono);padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--paper);color:var(--ink);width:100%;min-height:46px;-webkit-appearance:none;appearance:none}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .row2>*{min-width:0}
 .msg{font-size:14px;padding:10px 12px;border-radius:10px;background:var(--paper);border:1px solid var(--line)}
@@ -131,6 +131,8 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 
   <div class="today" id="today" hidden></div>
   <section class="days" id="days"></section>
+  <div class="today" id="prox" hidden></div>
+  <button class="btn ghost" type="button" id="btnAus">Férias e folgas</button>
   <p class="note">Dias úteis sem batida aparecem apagados e não entram no saldo (folga, atestado, feriado). Toque num dia para corrigir. Tolerância da CLT: até 5 min por batida e 10 min por dia.</p>
 </div>
 
@@ -145,7 +147,8 @@ const KEY="meuPonto.v1";
 const DOW=["dom","seg","ter","qua","qui","sex","sáb"];
 const MES=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
 const DEF_CFG={entrada:"08:00",saida:"17:00",almoco:60,limiteExtra:120,sabado:true,sabEntrada:"07:00",sabSaida:"11:00"};
-let state={punches:[],cfg:{...DEF_CFG}};
+let state={punches:[],ausencias:[],cfg:{...DEF_CFG}};
+const TIPOS={ferias:"Férias",folga:"Folga",compensa:"Folga do banco",atestado:"Atestado",feriado:"Feriado"};
 let periodOffset=0;
 
 const $=id=>document.getElementById(id);
@@ -158,7 +161,7 @@ const parseIso=s=>{const [y,m,d]=s.split("-").map(Number);return new Date(y,m-1,
 const br=s=>s.split("-").reverse().join("/");
 const cls=m=>m>0?"pos":m<0?"neg":"zero";
 
-function load(){try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&Array.isArray(s.punches)){const old=s.cfg||{};if(!("sabEntrada" in old))delete old.sabado;state={punches:s.punches,cfg:{...DEF_CFG,...old}}}}catch(e){}}
+function load(){try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&Array.isArray(s.punches)){const old=s.cfg||{};if(!("sabEntrada" in old))delete old.sabado;state={punches:s.punches,ausencias:Array.isArray(s.ausencias)?s.ausencias:[],cfg:{...DEF_CFG,...old}}}}catch(e){}}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(state));return true}catch(e){toast("Não consegui salvar no aparelho");return false}}
 function toast(t){const el=$("toast");el.textContent=t;el.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(()=>el.hidden=true,2200)}
 
@@ -174,6 +177,7 @@ function schedFor(date){
   if(dow===6&&c.sabado)return {ent:c.sabEntrada,sai:c.sabSaida,almoco:0};
   return null;
 }
+function ausDe(k){return state.ausencias.find(a=>a.ini<=k&&k<=a.fim)}
 function expectedFor(date){
   const h=schedFor(date);
   return h?(toMin(h.sai)-toMin(h.ent)-h.almoco):0;
@@ -206,7 +210,14 @@ function render(){
   const last=e<todayIso?new Date(end):new Date();
   for(let d=last;iso(d)>=s;d.setDate(d.getDate()-1)){
     const k=iso(d), list=byDay[k];
-    if(!list){if(expectedFor(d)>0&&k<todayIso)rows.push({k,empty:true});continue}
+    const aus=ausDe(k);
+    if(!list){
+      if(aus&&expectedFor(d)>0){
+        const desc=aus.tipo==="compensa"?-expectedFor(d):0;
+        if(k<=todayIso){saldo+=desc;rows.push({k,aus,desc})}
+        continue;
+      }
+      if(expectedFor(d)>0&&k<todayIso)rows.push({k,empty:true});continue}
     const r=calcDay(k,list.map(p=>p.time));
     if(r.status==="ok"){saldo+=r.diff;ext+=r.extra;h55+=r.h55;dias++}
     rows.push({k,r});
@@ -226,10 +237,14 @@ function render(){
     }
   }
 
+  const prox=state.ausencias.filter(a=>a.fim>=todayIso).sort((a,b)=>a.ini.localeCompare(b.ini));
+  $("prox").hidden=!prox.length||periodOffset!==0;
+  $("prox").innerHTML=prox.map(a=>`<b>${TIPOS[a.tipo]}</b>: ${a.ini===a.fim?br(a.ini):br(a.ini)+" a "+br(a.fim)}`).join("<br>");
   const box=$("days");
   if(!rows.length){box.innerHTML='<div class="emptystate">Nenhuma batida neste período.<br>Bateu o ponto? Toque em <b>Bati o ponto</b> e confira a hora com o ticket.</div>';return}
-  box.innerHTML=rows.map(({k,r,empty})=>{
+  box.innerHTML=rows.map(({k,r,empty,aus,desc})=>{
     const d=parseIso(k), lab=`${pad(d.getDate())}/${pad(d.getMonth()+1)}<small>${DOW[d.getDay()]}</small>`;
+    if(aus)return `<button class="day" type="button" data-k="${k}"><div class="d">${lab}</div><div class="t">${TIPOS[aus.tipo]}<small>${desc?"descontado do saldo":"não conta no saldo"}</small></div><div class="s ${cls(desc)}">${desc?fmt(desc):""}</div></button>`;
     if(empty)return `<button class="day empty" type="button" data-k="${k}"><div class="d">${lab}</div><div class="t">—<small>sem batidas</small></div><div class="s"></div></button>`;
     let sub,s;
     if(r.status==="incompleto"){sub=k===todayIso?"em andamento":"falta uma batida";s='<span class="zero">…</span>'}
@@ -281,7 +296,10 @@ function daySheet(k){
   const list=state.punches.filter(p=>p.date===k).sort((a,b)=>a.time.localeCompare(b.time)), d=parseIso(k);
   openSheet(`<h2>${DOW[d.getDay()]}, ${br(k)}</h2>
     <div class="list">${list.length?list.map(p=>`<div class="punch"><div><span class="mono">${p.time}</span><small>${p.nsr?"NSR "+p.nsr:"&nbsp;"}</small></div><button type="button" data-del="${p.id}">Excluir</button></div>`).join(""):'<p class="note">Nenhuma batida neste dia.</p>'}</div>
+    ${ausDe(k)?`<div class="msg">Marcado como <b>${TIPOS[ausDe(k).tipo]}</b>.</div>`:""}
+    <button class="btn ghost" type="button" id="dAus">${ausDe(k)?"Ver férias e folgas":"Marcar folga, férias ou atestado"}</button>
     <div class="btns"><button class="btn ghost" type="button" id="dClose">Fechar</button><button class="btn primary" type="button" id="dAdd">Adicionar batida</button></div>`);
+  $("dAus").onclick=()=>ausSheet(k);
   $("dClose").onclick=closeSheet;
   $("dAdd").onclick=()=>{const h=schedFor(parseIso(k));batiSheet(k,h?h.sai:state.cfg.saida)};
   $("box").querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
@@ -383,6 +401,38 @@ $("btnFoto").onclick=()=>{
   $("fileFoto").value="";$("fileFoto").click();
 };
 $("fileFoto").addEventListener("change",e=>{const f=e.target.files[0];if(f)lerFoto(f)});
+function ausSheet(dia){
+  dia=dia||iso(new Date());
+  const lista=[...state.ausencias].sort((a,b)=>b.ini.localeCompare(a.ini));
+  openSheet(`<h2>Férias e folgas</h2>
+    <div class="field"><label for="aTipo">Tipo</label><select id="aTipo">
+      <option value="ferias">Férias (não conta no saldo)</option>
+      <option value="folga">Folga (não conta no saldo)</option>
+      <option value="compensa">Folga do banco de horas (desconta do saldo)</option>
+      <option value="atestado">Atestado (não conta no saldo)</option>
+      <option value="feriado">Feriado (não conta no saldo)</option></select></div>
+    <div class="row2">
+      <div class="field"><label for="aIni">De</label><input id="aIni" type="date" value="${dia}"></div>
+      <div class="field"><label for="aFim">Até</label><input id="aFim" type="date" value="${dia}"></div>
+    </div>
+    <div class="msg err" id="aErr" hidden></div>
+    <div class="btns"><button class="btn ghost" type="button" id="aClose">Fechar</button><button class="btn primary" type="button" id="aSave">Salvar</button></div>
+    ${lista.length?'<div class="k">Marcados</div><div class="list">'+lista.map(a=>`<div class="punch"><div><b>${TIPOS[a.tipo]}</b><small>${a.ini===a.fim?br(a.ini):br(a.ini)+" a "+br(a.fim)}</small></div><button type="button" data-del="${a.id}">Excluir</button></div>`).join("")+"</div>":""}`);
+  $("aIni").onchange=()=>{if($("aFim").value<$("aIni").value)$("aFim").value=$("aIni").value};
+  $("aClose").onclick=closeSheet;
+  $("aSave").onclick=()=>{
+    const ini=$("aIni").value, fim=$("aFim").value, tipo=$("aTipo").value, err=$("aErr");
+    if(!ini||!fim||fim<ini){err.textContent="Confira as datas: o fim não pode ser antes do início.";err.hidden=false;return}
+    const choque=state.ausencias.find(a=>a.ini<=fim&&ini<=a.fim);
+    if(choque){err.textContent=`Já existe ${TIPOS[choque.tipo]} nessas datas. Exclua antes de marcar de novo.`;err.hidden=false;return}
+    state.ausencias.push({id:Date.now().toString(36),ini,fim,tipo});
+    if(save()){closeSheet();render();toast(`${TIPOS[tipo]} marcada`)}
+  };
+  $("box").querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{
+    if(!b.dataset.armed){b.dataset.armed="1";b.textContent="Confirmar?";return}
+    state.ausencias=state.ausencias.filter(a=>a.id!==b.dataset.del); save(); closeSheet(); render(); toast("Removido");
+  });
+}
 function bkpSheet(){
   openSheet(`<h2>Backup</h2>
     <p class="note">Suas batidas ficam guardadas só neste iPhone. Exporte de vez em quando (por exemplo, todo dia 20) e guarde no Arquivos ou no iCloud.</p>
@@ -408,12 +458,14 @@ $("fileImp").addEventListener("change",async e=>{
     const seen=new Set(state.punches.map(p=>p.date+p.time)); let n=0;
     s.punches.forEach(p=>{if(p&&p.date&&p.time&&!seen.has(p.date+p.time)){state.punches.push(p);seen.add(p.date+p.time);n++}});
     if(s.cfg)state.cfg={...DEF_CFG,...s.cfg};
+    if(Array.isArray(s.ausencias))s.ausencias.forEach(a=>{if(!state.ausencias.some(x=>x.ini===a.ini&&x.fim===a.fim))state.ausencias.push(a)});
     save(); render(); m.textContent=`${n} batidas importadas.`; m.className="msg"; m.hidden=false;
   }catch(err){m.textContent="Esse arquivo não é um backup do Meu Ponto.";m.className="msg err";m.hidden=false}
 });
 
 $("btnBati").onclick=()=>batiSheet();
 $("btnCfg").onclick=cfgSheet;
+$("btnAus").onclick=()=>ausSheet();
 $("btnBkp").onclick=bkpSheet;
 $("prev").onclick=()=>{periodOffset--;render()};
 $("next").onclick=()=>{if(periodOffset<0){periodOffset++;render()}};
