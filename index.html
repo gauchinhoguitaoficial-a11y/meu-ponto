@@ -138,6 +138,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
   <div class="today" id="prox" hidden></div>
   <button class="btn ghost" type="button" id="btnAus">Férias e folgas</button>
   <p class="note">Dias úteis sem batida aparecem apagados e não entram no saldo (folga, atestado, feriado). Toque num dia para corrigir. Tolerância da CLT: até 5 min por batida e 10 min por dia.</p>
+  <p class="note" style="text-align:center">Versão 6</p>
 </div>
 
 <div class="bar"><div class="in"><button class="btn primary" id="btnFoto" type="button">Foto do ticket</button><button class="btn ghost" id="btnBati" type="button">Bati o ponto</button></div></div>
@@ -503,7 +504,12 @@ document.addEventListener("visibilitychange",()=>{if(!document.hidden)render()})
 load(); render();
 setInterval(()=>{if(!document.hidden&&$("sheet").hidden)render()},30000);
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
-if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("sw.js",{updateViaCache:"none"}).then(r=>r.update()).catch(()=>{});
+  // quando a versão nova assumir, recarrega uma vez pra já mostrar
+  let recarregou=false;
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{if(!recarregou&&navigator.serviceWorker.controller){recarregou=true;location.reload()}});
+}
 </script>
 </body>
 </html>
