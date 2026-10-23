@@ -51,6 +51,10 @@ h1{font-size:22px;margin:0}
 .stats b{font:700 16px var(--f-mono)}
 .today{background:var(--paper);border:1px dashed var(--accent);border-radius:12px;padding:12px 14px;font-size:15px}
 .today b{font-family:var(--f-mono)}
+.today p{margin:8px 0 0}
+.live{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.live div{display:flex;flex-direction:column;gap:2px}
+.live .big{font:700 26px var(--f-mono);font-variant-numeric:tabular-nums}
 .days{display:flex;flex-direction:column;background:var(--card);border-radius:16px;border:1px solid var(--line);overflow:hidden}
 .day{display:grid;grid-template-columns:62px 1fr auto;gap:10px;align-items:center;padding:12px 14px;border:0;border-top:1px solid var(--line);background:none;color:inherit;font:inherit;text-align:left;width:100%;cursor:pointer}
 .day:first-child{border-top:0}
@@ -226,15 +230,17 @@ function render(){
   $("stDias").textContent=dias; $("stExt").textContent=fmt(ext,false); $("st55").textContent=fmt(h55,false);
 
   const td=$("today"); td.hidden=true;
-  if(periodOffset===0&&byDay[todayIso]){
-    const r=calcDay(todayIso,byDay[todayIso].map(p=>p.time));
-    if(r.status==="incompleto"&&r.times.length===1){
-      const hj=schedFor(new Date()), fim=r.times[0]+r.exp+(hj?hj.almoco:0), lim=fim+state.cfg.limiteExtra;
-      td.innerHTML=r.exp>0
-        ?`Entrou às <b>${fmtT(r.times[0])}</b>. Pra fechar o dia em zero, saia às <b>${fmtT(fim)}</b>. Depois de <b>${fmtT(lim)}</b> começa a hora 55.`
-        :`Entrou às <b>${fmtT(r.times[0])}</b>. Hoje não é dia útil: todo o tempo conta como extra.`;
-      td.hidden=false;
-    }
+  const ao=periodOffset===0&&byDay[todayIso]?aoVivo(byDay[todayIso].map(p=>p.time)):null;
+  if(ao){
+    const sinal=ao.saldo>=0?"pos":"neg";
+    td.innerHTML=`<div class="live"><div><span class="k">Trabalhado hoje</span><b class="big">${fmt(ao.trab,false)}</b></div><div><span class="k">Saldo de hoje</span><b class="big ${sinal}">${fmt(ao.saldo)}</b></div></div>`+
+      (ao.exp>0
+        ?(ao.saldo<0
+          ?`<p>Pra fechar o dia em zero, saia às <b>${fmtT(ao.fim)}</b>. Depois de <b>${fmtT(ao.lim)}</b> começa a hora 55.</p>`
+          :`<p>Já pode sair sem ficar devendo. Depois de <b>${fmtT(ao.lim)}</b> começa a hora 55.</p>`)
+        :`<p>Hoje não é dia útil: todo o tempo conta como extra.</p>`)+
+      (ao.intervalo?`<p class="note">Intervalo de hoje: ${fmt(ao.intervalo,false)} (descontado o tempo real).</p>`:(ao.autoAlm?`<p class="note">Já está descontando 1h de almoço automático.</p>`:""));
+    td.hidden=false;
   }
 
   const prox=state.ausencias.filter(a=>a.fim>=todayIso).sort((a,b)=>a.ini.localeCompare(b.ini));
@@ -247,13 +253,35 @@ function render(){
     if(aus)return `<button class="day" type="button" data-k="${k}"><div class="d">${lab}</div><div class="t">${TIPOS[aus.tipo]}<small>${desc?"descontado do saldo":"não conta no saldo"}</small></div><div class="s ${cls(desc)}">${desc?fmt(desc):""}</div></button>`;
     if(empty)return `<button class="day empty" type="button" data-k="${k}"><div class="d">${lab}</div><div class="t">—<small>sem batidas</small></div><div class="s"></div></button>`;
     let sub,s;
-    if(r.status==="incompleto"){sub=k===todayIso?"em andamento":"falta uma batida";s='<span class="zero">…</span>'}
+    if(r.status==="incompleto"){
+      if(k===todayIso&&ao){sub=`em andamento · ${fmt(ao.trab,false)}`;s=`<span class="${ao.saldo>=0?"pos":"neg"}">${fmt(ao.saldo)}</span>`}
+      else{sub="falta uma batida";s='<span class="zero">…</span>'}}
     else{
       sub=`trabalhou ${fmt(r.worked,false)}`+(r.autoAlmoco?" (−1h almoço)":"")+(r.tol?" · tolerância":"");
       s=`<span class="${cls(r.diff)}">${fmt(r.diff)}</span>`+(r.h55?`<br><span class="chip h55">55: ${fmt(r.h55,false)}</span>`:"");
     }
     return `<button class="day" type="button" data-k="${k}"><div class="d">${lab}</div><div class="t">${r.times.map(fmtT).join("  ")}<small>${sub}</small></div><div class="s">${s}</div></button>`;
   }).join("");
+}
+
+/* ---------- dia em andamento (ao vivo) ---------- */
+function aoVivo(times){
+  const t=times.map(toMin).sort((a,b)=>a-b);
+  if(t.length%2===0)return null;
+  const hoje=new Date(), agora=hoje.getHours()*60+hoje.getMinutes(), h=schedFor(hoje), c=state.cfg;
+  const exp=expectedFor(hoje), alm=h?h.almoco:0, ult=t[t.length-1];
+  let fechado=0,intervalo=0;
+  for(let i=0;i+1<t.length;i+=2){fechado+=t[i+1]-t[i]; if(i+2<t.length)intervalo+=t[i+2]-t[i+1]}
+  const corrida=Math.max(0,agora-ult);
+  let trab=fechado+corrida, fim, autoAlm=false;
+  if(t.length===1){
+    // só a entrada: o relógio desconta o almoço sozinho no fim do dia
+    if(trab>360&&alm>0){trab-=alm;autoAlm=true}
+    fim=t[0]+exp+alm;
+  }else{
+    fim=ult+(exp-fechado);
+  }
+  return {trab,saldo:trab-exp,exp,fim,lim:fim+c.limiteExtra,intervalo,autoAlm};
 }
 
 /* ---------- telas ---------- */
@@ -473,6 +501,7 @@ $("days").addEventListener("click",e=>{const b=e.target.closest(".day");if(b)day
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)render()});
 
 load(); render();
+setInterval(()=>{if(!document.hidden&&$("sheet").hidden)render()},30000);
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
